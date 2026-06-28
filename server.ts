@@ -20,16 +20,20 @@ const ai = new GoogleGenAI({
 });
 
 /**
- * Executes a Gemini API call with exponential backoff on transient errors (e.g., 503, 429).
+ * Executes a Gemini API call with exponential backoff and dynamic model failover on transient errors (e.g., 503, 429).
  */
 async function callGeminiWithRetry<T>(
-  apiCall: () => Promise<T>,
-  retries = 3,
-  delayMs = 1000
+  apiCall: (modelName: string) => Promise<T>,
+  retries = 5,
+  delayMs = 1500
 ): Promise<T> {
+  const modelsToTry = ["gemini-3.5-flash", "gemini-3.1-flash-lite"];
   for (let attempt = 1; attempt <= retries; attempt++) {
+    // Dynamic failover: Try primary gemini-3.5-flash first (attempts 1 & 2),
+    // then fall back to gemini-3.1-flash-lite (attempts 3+) if experiencing transient loads.
+    const currentModel = attempt <= 2 ? modelsToTry[0] : modelsToTry[1];
     try {
-      return await apiCall();
+      return await apiCall(currentModel);
     } catch (error: any) {
       const errorMessage = String(error.message || "").toUpperCase();
       const errorStatus = error.status;
@@ -41,7 +45,7 @@ async function callGeminiWithRetry<T>(
         errorMessage.includes("EXCEEDED YOUR CURRENT QUOTA") ||
         errorMessage.includes("RATE-LIMIT");
 
-      console.warn(`Gemini API attempt ${attempt} failed: ${errorStatus || "Error"} - ${isQuotaExceeded ? "Quota limit reached" : (error.message ? error.message.substring(0, 150) + "..." : "Unknown error")}`);
+      console.warn(`Gemini API attempt ${attempt} [Model: ${currentModel}] failed: ${errorStatus || "Error"} - ${isQuotaExceeded ? "Quota limit reached" : (error.message ? error.message.substring(0, 150) + "..." : "Unknown error")}`);
       
       const isTransient = 
         (errorStatus === 503 || 
@@ -50,12 +54,16 @@ async function callGeminiWithRetry<T>(
         errorMessage.includes("UNAVAILABLE") ||
         errorMessage.includes("HIGH DEMAND") ||
         errorMessage.includes("TEMPORARY") ||
-        errorMessage.includes("SPIKES IN DEMAND")) &&
+        errorMessage.includes("SPIKES IN DEMAND") ||
+        errorMessage.includes("BUSY") ||
+        errorMessage.includes("TRY AGAIN LATER") ||
+        errorMessage.includes("SERVICE UNAVAILABLE")) &&
         !isQuotaExceeded;
 
       if (isTransient && attempt < retries) {
-        const backoff = delayMs * Math.pow(2, attempt - 1);
-        console.log(`Retrying Gemini API call in ${backoff}ms (attempt ${attempt + 1}/${retries})...`);
+        // Exponential backoff with random jitter
+        const backoff = (delayMs * Math.pow(2, attempt - 1)) + Math.random() * 1000;
+        console.log(`Retrying Gemini API call in ${Math.round(backoff)}ms (attempt ${attempt + 1}/${retries}) with model fallback routing...`);
         await new Promise((resolve) => setTimeout(resolve, backoff));
         continue;
       }
@@ -336,9 +344,9 @@ ${code}
 Return a highly immersive response following the requested JSON schema. Make it rich with sci-fi humor, complex alien keywords, and lore-friendly mechanics. Ensure the translated alien code looks structured, alien, and exciting.`;
 
       // Wrap the call inside the retry utility
-      const result = await callGeminiWithRetry(async () => {
+      const result = await callGeminiWithRetry(async (modelName) => {
         const response = await ai.models.generateContent({
-          model: "gemini-3.5-flash",
+          model: modelName,
           contents: prompt,
           config: {
             systemInstruction: `You are an advanced Galactic Translation Core. Your job is to translate primitive human code into complex, imaginative, and highly immersive Alien Programming languages (Zeta-6 Geometric-Telepathic, Xylor Bio-Organic, or Gorgon Temporal-Chrono). Be extremely creative, humorous, and thorough with the mechanics.`,
@@ -409,9 +417,9 @@ ${code}
 
 Generate a sequence of 4-6 detailed execution logs, compilation steps, or telemetry checkups that look highly advanced and sci-fi. Include metrics about the system performance (such as mycelial density, telepathic signal strength, or chronological divergence) and a final output. Make it look like a real runtime execution, including warnings or potential failure risk. Ensure it is formatted according to the JSON schema.`;
 
-      const result = await callGeminiWithRetry(async () => {
+      const result = await callGeminiWithRetry(async (modelName) => {
         const response = await ai.models.generateContent({
-          model: "gemini-3.5-flash",
+          model: modelName,
           contents: prompt,
           config: {
             systemInstruction: "You are the primary compiler shell of a highly advanced Alien Spacecraft. You generate realistic, lore-rich log streams of compiling and executing programs, complete with sensory feedback, error checks, and final yields.",
@@ -493,9 +501,9 @@ Generate a sequence of 4-6 detailed execution logs, compilation steps, or teleme
         parts: [{ text: msg.content }]
       }));
 
-      const result = await callGeminiWithRetry(async () => {
+      const result = await callGeminiWithRetry(async (modelName) => {
         const response = await ai.models.generateContent({
-          model: "gemini-3.5-flash",
+          model: modelName,
           contents: contents,
           config: {
             systemInstruction: `You are Zorblax, a high-ranking DevOps Architect from the Sector-7 Nebular Alliance, forced to act as an AI compiler companion inside this primitive "Alien Programming Simulator" designed for human training. 
@@ -539,9 +547,9 @@ The response should contain several file tabs, code content, descriptions of wha
 
 Follow the JSON schema exactly.`;
 
-      const result = await callGeminiWithRetry(async () => {
+      const result = await callGeminiWithRetry(async (modelName) => {
         const response = await ai.models.generateContent({
-          model: "gemini-3.5-flash",
+          model: modelName,
           contents: corePrompt,
           config: {
             systemInstruction,
