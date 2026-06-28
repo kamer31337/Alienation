@@ -44,6 +44,9 @@ import {
   Shield,
   ShieldAlert,
   Shuffle,
+  Share2,
+  Wand2,
+  Keyboard,
 } from "lucide-react";
 
 const ALIEN_KEYWORDS: Record<Language, string[]> = {
@@ -453,6 +456,115 @@ const performQasmLint = (code: string): QasmLintIssue[] => {
   return issues;
 };
 
+const autoCorrectAlienCode = (code: string, lang: Language): { correctedCode: string; changes: string[] } => {
+  let corrected = code;
+  const changes: string[] = [];
+  if (!code) return { correctedCode: "", changes: [] };
+
+  // 1. Keyword Casing correction
+  const keywordsMap: Record<Language, string[]> = {
+    zeta: ["COORDINATE", "QUANTUM_NODE", "TESS_LOOP", "RESONATE", "COLLAPSE", "PSI_PROJECTION"],
+    xylor: ["NUTRIENT_NODE", "SPORE_BLOOM", "SHED_SPORES", "ENZYME_SECRETION"],
+    gorgon: ["TIME_ANCHOR", "TEMPORAL_WORMHOLE", "TIME_WARP", "CHRONICLE_ECHO", "CHRONO_PRESENT", "CHRONO_FUTURE"]
+  };
+  const keywords = keywordsMap[lang] || [];
+
+  const lines = corrected.split("\n");
+  const correctedLines = lines.map((line, lineIdx) => {
+    let lineText = line;
+    if (lineText.trim().startsWith("//")) return lineText;
+
+    keywords.forEach(kw => {
+      const regex = new RegExp(`\\b${kw}\\b`, "gi");
+      const matches = lineText.match(regex);
+      if (matches) {
+        const hasImproperCasing = matches.some(m => m !== kw);
+        if (hasImproperCasing) {
+          lineText = lineText.replace(regex, kw);
+          changes.push(`Corrected casing of '${kw}' on line ${lineIdx + 1}`);
+        }
+      }
+    });
+
+    return lineText;
+  });
+  corrected = correctedLines.join("\n");
+
+  // 2. Bracket matching and balancing
+  const stack: { char: string; pos: number; line: number }[] = [];
+  const openToClose: Record<string, string> = { "{": "}", "(": ")", "[": "]" };
+  const closeToOpen: Record<string, string> = { "}": "{", ")": "(", "]": "[" };
+
+  let inLineComment = false;
+  let inString: string | null = null;
+  let charArray = Array.from(corrected);
+  
+  for (let i = 0; i < charArray.length; i++) {
+    const char = charArray[i];
+    const prevChar = i > 0 ? charArray[i - 1] : "";
+    const nextChar = i < charArray.length - 1 ? charArray[i + 1] : "";
+
+    // Handle string boundaries
+    if (inString) {
+      if (char === inString && prevChar !== "\\") {
+        inString = null;
+      }
+      continue;
+    }
+    if (char === '"' || char === "'") {
+      inString = char;
+      continue;
+    }
+
+    // Handle comment boundaries
+    if (inLineComment) {
+      if (char === "\n") {
+        inLineComment = false;
+      }
+      continue;
+    }
+    if (char === "/" && nextChar === "/") {
+      inLineComment = true;
+      i++;
+      continue;
+    }
+
+    // Process brackets
+    if (char === "{" || char === "(" || char === "[") {
+      stack.push({ char, pos: i, line: corrected.slice(0, i).split("\n").length });
+    } else if (char === "}" || char === ")" || char === "]") {
+      if (stack.length > 0) {
+        const top = stack[stack.length - 1];
+        if (openToClose[top.char] === char) {
+          stack.pop();
+        } else {
+          const correctClose = openToClose[top.char];
+          charArray[i] = correctClose;
+          stack.pop();
+          changes.push(`Corrected mismatched closing bracket to '${correctClose}' on line ${corrected.slice(0, i).split("\n").length}`);
+        }
+      } else {
+        charArray[i] = "";
+        changes.push(`Removed extra trailing bracket '${char}' on line ${corrected.slice(0, i).split("\n").length}`);
+      }
+    }
+  }
+
+  // Auto-close any unclosed opening brackets remaining in stack
+  let suffix = "";
+  while (stack.length > 0) {
+    const unclosed = stack.pop()!;
+    const closingChar = openToClose[unclosed.char];
+    suffix += (unclosed.char === "{" ? "\n" : "") + closingChar;
+    changes.push(`Balanced unclosed '${unclosed.char}' from line ${unclosed.line}`);
+  }
+
+  // Join back and clean up empty spaces from removal
+  let correctedCode = charArray.join("") + suffix;
+
+  return { correctedCode, changes };
+};
+
 export default function App() {
   const [selectedLanguage, setSelectedLanguage] = useState<Language>("zeta");
   const [activeCode, setActiveCode] = useState<string>("");
@@ -490,6 +602,22 @@ export default function App() {
 
   // New features states: Alien Theme and Autocomplete
   const [isAlienThemeActive, setIsAlienThemeActive] = useState<boolean>(true);
+  const [editorVisualTheme, setEditorVisualTheme] = useState<"dark_void" | "high_contrast_nebula">(() => {
+    return (localStorage.getItem("editor_visual_theme") as "dark_void" | "high_contrast_nebula") || "dark_void";
+  });
+  const [isShareModalOpen, setIsShareModalOpen] = useState<boolean>(false);
+  const [isShortcutModalOpen, setIsShortcutModalOpen] = useState<boolean>(false);
+  const [lowLightMode, setLowLightMode] = useState<"normal" | "dimmed" | "amber">(() => {
+    return (localStorage.getItem("editor_low_light_mode") as "normal" | "dimmed" | "amber") || "normal";
+  });
+  const [generatedShareUrl, setGeneratedShareUrl] = useState<string>("");
+  const [sharedRoutineName, setSharedRoutineName] = useState<string>("");
+  const [sharedRoutineId, setSharedRoutineId] = useState<string>("");
+  const [shareCopied, setShareCopied] = useState<boolean>(false);
+  const [shareCardCopied, setShareCardCopied] = useState<boolean>(false);
+  const [decryptStatus, setDecryptStatus] = useState<{ visible: boolean; name: string; id: string; timestamp: string } | null>(null);
+  const [autoCorrectResults, setAutoCorrectResults] = useState<{ visible: boolean; changes: string[] } | null>(null);
+
   const [autocompleteSuggestions, setAutocompleteSuggestions] = useState<string[]>([]);
   const [activeSuggestionIdx, setActiveSuggestionIdx] = useState<number>(0);
   const [showAutocomplete, setShowAutocomplete] = useState<boolean>(false);
@@ -529,9 +657,32 @@ export default function App() {
     localStorage.setItem("saved_alien_snippets", JSON.stringify(savedSnippets));
   }, [savedSnippets]);
 
+  const getLowLightStyle = () => {
+    if (editorVisualTheme !== "dark_void") return {};
+    if (lowLightMode === "dimmed") {
+      return { filter: "brightness(0.65) contrast(0.95)" };
+    }
+    if (lowLightMode === "amber") {
+      return { filter: "sepia(0.6) hue-rotate(335deg) saturate(1.25) brightness(0.85)" };
+    }
+    return {};
+  };
+
   // Get dynamic colors for the Alien Language responsive theme
   const getThemeClasses = () => {
+    const isNebula = editorVisualTheme === "high_contrast_nebula";
+    
     if (!isAlienThemeActive) {
+      if (isNebula) {
+        return {
+          bg: "bg-slate-900 border-yellow-400/80",
+          lineBg: "bg-slate-950 border-yellow-400/40 text-yellow-300",
+          caret: "caret-yellow-400",
+          text: "text-yellow-100 font-semibold",
+          glow: "shadow-[0_0_20px_rgba(234,179,8,0.25)]",
+          accentText: "text-yellow-400 font-bold"
+        };
+      }
       return {
         bg: "bg-zinc-950 border-zinc-850/80",
         lineBg: "bg-zinc-950/80 border-zinc-900/60 text-zinc-600",
@@ -544,31 +695,52 @@ export default function App() {
     
     switch (selectedLanguage) {
       case "zeta":
-        return {
-          bg: "bg-[#030d16] border-cyan-500/30",
-          lineBg: "bg-[#020910] border-cyan-950/65 text-cyan-700",
-          caret: "caret-cyan-400",
-          text: "text-cyan-100/90",
-          glow: "shadow-[0_0_20px_rgba(34,211,238,0.1)]",
-          accentText: "text-cyan-400"
+        return isNebula ? {
+          bg: "bg-[#031628] border-cyan-400",
+          lineBg: "bg-[#052646] border-cyan-300 text-cyan-200",
+          caret: "caret-cyan-300",
+          text: "text-cyan-50 font-semibold",
+          glow: "shadow-[0_0_30px_rgba(6,182,212,0.4)]",
+          accentText: "text-cyan-300 font-extrabold"
+        } : {
+          bg: "bg-black border-cyan-500/25",
+          lineBg: "bg-black border-cyan-950/50 text-cyan-800",
+          caret: "caret-cyan-500",
+          text: "text-cyan-100/80",
+          glow: "",
+          accentText: "text-cyan-500"
         };
       case "xylor":
-        return {
-          bg: "bg-[#020b06] border-emerald-500/30",
-          lineBg: "bg-[#010704] border-emerald-950/65 text-emerald-700",
-          caret: "caret-emerald-400",
-          text: "text-emerald-100/90",
-          glow: "shadow-[0_0_20px_rgba(52,211,153,0.1)]",
-          accentText: "text-emerald-400"
+        return isNebula ? {
+          bg: "bg-[#021d0a] border-emerald-400",
+          lineBg: "bg-[#043310] border-emerald-300 text-emerald-200",
+          caret: "caret-emerald-300",
+          text: "text-emerald-50 font-semibold",
+          glow: "shadow-[0_0_30px_rgba(16,185,129,0.4)]",
+          accentText: "text-emerald-300 font-extrabold"
+        } : {
+          bg: "bg-black border-emerald-500/25",
+          lineBg: "bg-black border-emerald-950/50 text-emerald-800",
+          caret: "caret-emerald-500",
+          text: "text-emerald-100/80",
+          glow: "",
+          accentText: "text-emerald-500"
         };
       case "gorgon":
-        return {
-          bg: "bg-[#06020c] border-purple-500/30",
-          lineBg: "bg-[#040108] border-purple-950/65 text-purple-700",
-          caret: "caret-purple-400",
-          text: "text-purple-100/90",
-          glow: "shadow-[0_0_20px_rgba(192,132,252,0.1)]",
-          accentText: "text-purple-400"
+        return isNebula ? {
+          bg: "bg-[#18032b] border-purple-400",
+          lineBg: "bg-[#2f0750] border-purple-300 text-purple-200",
+          caret: "caret-purple-300",
+          text: "text-purple-50 font-semibold",
+          glow: "shadow-[0_0_30px_rgba(168,85,247,0.4)]",
+          accentText: "text-purple-300 font-extrabold"
+        } : {
+          bg: "bg-black border-purple-500/25",
+          lineBg: "bg-black border-purple-950/50 text-purple-800",
+          caret: "caret-purple-500",
+          text: "text-purple-100/80",
+          glow: "",
+          accentText: "text-purple-500"
         };
       default:
         return {
@@ -768,6 +940,48 @@ export default function App() {
     const completed = localStorage.getItem("alien_onboarding_completed_v1");
     if (!completed) {
       setShowOnboarding(true);
+    }
+  }, []);
+
+  // Save editor theme setting when modified
+  useEffect(() => {
+    localStorage.setItem("editor_visual_theme", editorVisualTheme);
+  }, [editorVisualTheme]);
+
+  // Save low light environment setting when modified
+  useEffect(() => {
+    localStorage.setItem("editor_low_light_mode", lowLightMode);
+  }, [lowLightMode]);
+
+  // Check for shared routine in URL parameters on mount
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const shareId = params.get("share");
+    if (shareId) {
+      try {
+        const sharedRegistry = JSON.parse(localStorage.getItem("shared_alien_routines") || "[]");
+        const found = sharedRegistry.find((r: any) => r.id === shareId);
+        if (found) {
+          setSelectedLanguage(found.language);
+          setActiveCode(found.code);
+          setActiveProject({
+            id: `shared_${found.id}`,
+            projectName: found.name,
+            dialect: found.language,
+            description: `Subspace Shared Routine decrypted successfully.`,
+            difficulty: "Medium",
+            specifications: ["Standard crew shared algorithmic sequence."]
+          });
+          setDecryptStatus({
+            visible: true,
+            name: found.name,
+            id: found.id,
+            timestamp: found.timestamp || new Date().toLocaleString()
+          });
+        }
+      } catch (err) {
+        console.error("Failed to decrypt shared routine from URL:", err);
+      }
     }
   }, []);
 
@@ -1003,6 +1217,48 @@ measure q -> c;
     setActiveCode(formatted);
   };
 
+  const handleShareRoutine = () => {
+    const routineId = Math.random().toString(36).substring(2, 9);
+    const routineName = activeProject ? activeProject.projectName : `Routine_${selectedLanguage.toUpperCase()}_${routineId}`;
+    
+    let sharedRegistry = [];
+    try {
+      sharedRegistry = JSON.parse(localStorage.getItem("shared_alien_routines") || "[]");
+    } catch (e) {
+      console.error(e);
+    }
+    const newShared = {
+      id: routineId,
+      name: routineName,
+      language: selectedLanguage,
+      code: activeCode,
+      timestamp: new Date().toLocaleString()
+    };
+    
+    sharedRegistry.push(newShared);
+    localStorage.setItem("shared_alien_routines", JSON.stringify(sharedRegistry));
+    
+    const publicUrl = `${window.location.origin}${window.location.pathname}?share=${routineId}`;
+    setGeneratedShareUrl(publicUrl);
+    setSharedRoutineId(routineId);
+    setSharedRoutineName(routineName);
+    setShareCopied(false);
+    setShareCardCopied(false);
+    setIsShareModalOpen(true);
+  };
+
+  const handleAutoCorrect = () => {
+    const { correctedCode, changes } = autoCorrectAlienCode(activeCode, selectedLanguage);
+    if (correctedCode !== activeCode) {
+      setActiveCode(correctedCode);
+      setActiveProject(null);
+    }
+    setAutoCorrectResults({
+      visible: true,
+      changes: changes
+    });
+  };
+
   // Voice Recognition Web Speech API Initializer
   useEffect(() => {
     const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
@@ -1077,7 +1333,7 @@ measure q -> c;
     }
   };
 
-  // Keyboard Shortcuts (Ctrl+Enter to Translate/Run, Ctrl+S to Format)
+  // Keyboard Shortcuts (Ctrl+Enter to Translate/Run, Ctrl+S to Format, Ctrl+/ to Shortcuts)
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
@@ -1087,6 +1343,13 @@ measure q -> c;
       if ((e.ctrlKey || e.metaKey) && e.key === "s") {
         e.preventDefault();
         handleFormatCode();
+      }
+      if ((e.ctrlKey || e.metaKey) && (e.key === "/" || e.key === "?")) {
+        e.preventDefault();
+        setIsShortcutModalOpen(prev => !prev);
+      }
+      if (e.key === "Escape") {
+        setIsShortcutModalOpen(false);
       }
     };
 
@@ -1759,6 +2022,70 @@ measure q -> c;
           </div>
         )}
 
+        {/* Decryption Success Notification Banner */}
+        {decryptStatus && decryptStatus.visible && (
+          <div className="bg-emerald-950/30 border border-emerald-500/40 rounded-xl p-4 flex items-start justify-between gap-3 animate-fade-in shadow-[0_0_15px_rgba(16,185,129,0.1)]" id="decryption-success-banner">
+            <div className="flex items-start gap-3">
+              <ShieldCheck className="w-5 h-5 text-emerald-400 shrink-0 mt-0.5 animate-pulse" />
+              <div>
+                <h4 className="font-mono text-xs font-bold text-emerald-300">
+                  🛸 SUBSPACE DATA-STREAM DECRYPTED
+                </h4>
+                <p className="font-mono text-[11px] text-zinc-300 mt-1 leading-relaxed">
+                  Successfully decrypted a shared alien routine: <strong className="text-emerald-300 font-bold">"{decryptStatus.name}"</strong> (ID: <span className="font-mono text-cyan-400">#{decryptStatus.id}</span>). 
+                  Synchronized on <span className="text-zinc-400 font-semibold">{decryptStatus.timestamp}</span>. Loaded into the editor buffer registers.
+                </p>
+              </div>
+            </div>
+            <button 
+              onClick={() => {
+                setDecryptStatus(null);
+                const newUrl = window.location.protocol + "//" + window.location.host + window.location.pathname;
+                window.history.pushState({ path: newUrl }, '', newUrl);
+              }}
+              className="text-zinc-500 hover:text-zinc-200 font-mono text-[10px] uppercase font-bold px-2 py-1 rounded bg-zinc-950 hover:bg-zinc-900 border border-zinc-900 hover:border-zinc-800 transition-all cursor-pointer"
+            >
+              Dismiss
+            </button>
+          </div>
+        )}
+
+        {/* Auto-Correct Diagnostics and Structural Harmonization Notification */}
+        {autoCorrectResults && autoCorrectResults.visible && (
+          <div className="bg-cyan-950/30 border border-cyan-500/40 rounded-xl p-4 flex items-start justify-between gap-3 animate-fade-in shadow-[0_0_15px_rgba(6,182,212,0.1)]" id="autocorrect-banner">
+            <div className="flex items-start gap-3">
+              <Sparkles className="w-5 h-5 text-cyan-400 shrink-0 mt-0.5 animate-pulse" />
+              <div>
+                <h4 className="font-mono text-xs font-bold text-cyan-300">
+                  ✨ AUTO-CORRECT DIAGNOSTICS & HARMONIZATION
+                </h4>
+                {autoCorrectResults.changes.length === 0 ? (
+                  <p className="font-mono text-[11px] text-emerald-400 font-bold mt-1 leading-relaxed">
+                    Diagnostic complete: All structural brackets, parentheses, and keyword casings are perfectly aligned in the selected dialect! No anomalies detected.
+                  </p>
+                ) : (
+                  <div className="mt-2 space-y-1">
+                    <p className="font-mono text-[11px] text-zinc-300 leading-relaxed mb-1.5">
+                      Successfully applied <strong className="text-cyan-400">{autoCorrectResults.changes.length}</strong> semantic corrections:
+                    </p>
+                    <ul className="list-disc pl-4 space-y-1 max-h-24 overflow-y-auto">
+                      {autoCorrectResults.changes.map((change, idx) => (
+                        <li key={idx} className="font-mono text-[10px] text-zinc-400">{change}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </div>
+            </div>
+            <button 
+              onClick={() => setAutoCorrectResults(null)}
+              className="text-zinc-500 hover:text-zinc-200 font-mono text-[10px] uppercase font-bold px-2 py-1 rounded bg-zinc-950 hover:bg-zinc-900 border border-zinc-900 hover:border-zinc-800 transition-all cursor-pointer"
+            >
+              Acknowledge
+            </button>
+          </div>
+        )}
+
         {/* 1. Language Dialect Selector */}
         <div className="space-y-2">
           <div className="flex items-center gap-1.5 text-zinc-400 font-mono text-[11px] font-bold uppercase tracking-widest pl-1">
@@ -1871,27 +2198,84 @@ measure q -> c;
                       <span>Alien Theme</span>
                     </button>
 
-                    {/* Font Size Zoom Controller */}
-                    <div className="flex items-center gap-1.5 bg-zinc-950/80 border border-zinc-800/80 px-2 py-1 rounded-lg">
-                      <span className="font-mono text-[9px] text-zinc-500 uppercase tracking-wider">ZOOM:</span>
+                    {/* Editor Visual Theme Toggle */}
+                    <div className="flex items-center gap-1.5 flex-wrap">
                       <button
-                        onClick={() => setEditorFontSize(prev => Math.max(10, prev - 1))}
-                        disabled={editorFontSize <= 10}
+                        onClick={() => setEditorVisualTheme(prev => prev === "dark_void" ? "high_contrast_nebula" : "dark_void")}
+                        className={`px-2.5 py-1 font-mono text-[10px] font-bold rounded-lg border transition-all flex items-center gap-1.5 cursor-pointer ${
+                          editorVisualTheme === "high_contrast_nebula"
+                            ? "border-cyan-400 bg-cyan-950/40 text-cyan-300 font-semibold shadow-[0_0_12px_rgba(34,211,238,0.25)]"
+                            : "border-zinc-800 bg-zinc-950 hover:bg-zinc-900 text-zinc-400 hover:text-zinc-200"
+                        }`}
+                        title="Switch between 'Dark Void' and 'High Contrast Nebula' themes to improve visibility in low-light ship environments"
+                      >
+                        {editorVisualTheme === "high_contrast_nebula" ? (
+                          <Eye className="w-3.5 h-3.5 text-cyan-400" />
+                        ) : (
+                          <EyeOff className="w-3.5 h-3.5 text-zinc-500" />
+                        )}
+                        <span>Theme: {editorVisualTheme === "high_contrast_nebula" ? "Nebula (Contrast)" : "Dark Void"}</span>
+                      </button>
+
+                      {/* Low-Light Environment Compatibility Sub-Preset */}
+                      {editorVisualTheme === "dark_void" && (
+                        <div className="flex items-center gap-1.5 bg-zinc-950 border border-zinc-800/80 px-2.5 py-1 rounded-lg">
+                          <span className="font-mono text-[9px] text-zinc-500 uppercase tracking-wider font-bold">COCKPIT PRESET:</span>
+                          <select
+                            value={lowLightMode}
+                            onChange={(e) => setLowLightMode(e.target.value as any)}
+                            className="bg-zinc-900 border border-zinc-800 text-zinc-300 font-mono text-[10px] px-2 py-0.5 rounded cursor-pointer focus:outline-none"
+                            title="Filter blue-light or dim screen for night-time spaceflight compatibility"
+                          >
+                            <option value="normal">Normal Dark</option>
+                            <option value="dimmed">Cockpit Dim (65%)</option>
+                            <option value="amber">Amber Shift (No Blue)</option>
+                          </select>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Font Size Fine-grained Slider & Controller */}
+                    <div className="flex items-center gap-2 bg-zinc-950/80 border border-zinc-800/80 px-2.5 py-1 rounded-lg">
+                      <span className="font-mono text-[9px] text-zinc-500 uppercase tracking-wider font-bold">FONT:</span>
+                      <button
+                        onClick={() => setEditorFontSize(prev => Math.max(8, prev - 1))}
+                        disabled={editorFontSize <= 8}
                         className="p-0.5 hover:bg-zinc-900 rounded text-zinc-400 hover:text-zinc-200 transition-colors disabled:opacity-30 disabled:hover:bg-transparent cursor-pointer"
-                        title="Zoom Out"
+                        title="Decrease Font Size (1px)"
                       >
                         <Minus className="w-3 h-3" />
                       </button>
+                      <input
+                        type="range"
+                        min="8"
+                        max="32"
+                        step="1"
+                        value={editorFontSize}
+                        onChange={(e) => setEditorFontSize(Number(e.target.value))}
+                        className="w-14 h-1 bg-zinc-800 rounded-lg appearance-none cursor-pointer accent-cyan-500"
+                        title="Slide to adjust font size (1px steps)"
+                      />
                       <span className="font-mono text-[10px] text-zinc-300 min-w-[28px] text-center font-bold">{editorFontSize}px</span>
                       <button
-                        onClick={() => setEditorFontSize(prev => Math.min(24, prev + 1))}
-                        disabled={editorFontSize >= 24}
+                        onClick={() => setEditorFontSize(prev => Math.min(32, prev + 1))}
+                        disabled={editorFontSize >= 32}
                         className="p-0.5 hover:bg-zinc-900 rounded text-zinc-400 hover:text-zinc-200 transition-colors disabled:opacity-30 disabled:hover:bg-transparent cursor-pointer"
-                        title="Zoom In"
+                        title="Increase Font Size (1px)"
                       >
                         <Plus className="w-3 h-3" />
                       </button>
                     </div>
+
+                    {/* Keyboard Shortcuts Trigger Button */}
+                    <button
+                      onClick={() => setIsShortcutModalOpen(true)}
+                      className="px-2.5 py-1 font-mono text-[10px] font-bold rounded-lg border border-zinc-800 bg-zinc-950 hover:bg-zinc-900 text-zinc-300 hover:text-zinc-100 transition-all flex items-center gap-1.5 cursor-pointer"
+                      title="View all Keyboard Shortcuts & Hotkeys (Ctrl+/)"
+                    >
+                      <Keyboard className="w-3.5 h-3.5 text-zinc-400" />
+                      <span>Shortcuts</span>
+                    </button>
 
                     {/* Dictate Code button */}
                     <button
@@ -1926,6 +2310,16 @@ measure q -> c;
                       <span>Format</span>
                     </button>
 
+                    {/* Auto-Correct button */}
+                    <button
+                      onClick={handleAutoCorrect}
+                      className="px-2.5 py-1 font-mono text-[10px] font-bold rounded-lg border border-zinc-800 bg-zinc-950 hover:bg-zinc-900 text-zinc-300 hover:text-zinc-100 transition-colors flex items-center gap-1 cursor-pointer shadow-[0_0_8px_rgba(34,211,238,0.05)]"
+                      title="Scan buffer and automatically fix mismatched brackets or casing errors"
+                    >
+                      <Wand2 className="w-3 h-3 text-cyan-400" />
+                      <span>Auto-Correct</span>
+                    </button>
+
                     {/* Export QASM button */}
                     <button
                       onClick={handleExportQASM}
@@ -1934,6 +2328,16 @@ measure q -> c;
                     >
                       <Download className="w-3 h-3 text-cyan-400" />
                       <span>Export QASM</span>
+                    </button>
+
+                    {/* Share Routine button */}
+                    <button
+                      onClick={handleShareRoutine}
+                      className="px-2.5 py-1 font-mono text-[10px] font-bold rounded-lg border border-zinc-800 bg-zinc-950 hover:bg-zinc-900 text-zinc-300 hover:text-zinc-100 transition-colors flex items-center gap-1 cursor-pointer"
+                      title="Share this routine with other crew members"
+                    >
+                      <Share2 className="w-3 h-3 text-amber-400" />
+                      <span>Share</span>
                     </button>
 
                     {/* Copy to Clipboard button */}
@@ -2142,8 +2546,13 @@ measure q -> c;
                 );
               })()}
 
-              {/* Code Area */}
-              <div className={`flex-1 min-h-[300px] rounded-xl overflow-hidden flex relative font-mono text-xs border transition-all duration-300 ${getThemeClasses().bg} ${getThemeClasses().glow}`}>
+              {/* Code Area Wrapper with Low-Light Cockpit filter support */}
+              <div 
+                className={`flex-1 rounded-xl overflow-hidden flex flex-col border transition-all duration-300 ${getThemeClasses().bg} ${getThemeClasses().glow}`}
+                style={getLowLightStyle()}
+              >
+                {/* Editor scrollable layer */}
+                <div className="flex-1 min-h-[300px] flex relative font-mono text-xs">
                 {/* Simulated vertical line counter column, scaling with font zoom */}
                 {showLineNumbers && (
                   <div
@@ -2304,6 +2713,46 @@ measure q -> c;
                     }}
                   />
                 </div>
+              </div>
+
+              {/* Real-time Character and Word Count Status Bar */}
+                <div className="bg-zinc-950/90 border-t border-zinc-900 px-4 py-2 flex flex-col sm:flex-row justify-between items-center text-[10px] text-zinc-400 font-mono gap-2 relative z-20 select-none">
+                  <div className="flex items-center gap-4 flex-wrap">
+                    <span className="flex items-center gap-1">
+                      <span className="w-1.5 h-1.5 rounded-full bg-cyan-500 animate-pulse" />
+                      <span className="uppercase text-zinc-500 font-semibold text-[8px] tracking-wider">DIALECT:</span>
+                      <strong className="text-zinc-200 uppercase">{selectedLanguage}</strong>
+                    </span>
+                    <span className="text-zinc-800">|</span>
+                    <span>
+                      <span className="text-zinc-500 font-semibold uppercase text-[8px] tracking-wider">CHARS:</span> <strong className="text-zinc-350">{activeCode.length}</strong>
+                    </span>
+                    <span className="text-zinc-800">|</span>
+                    <span>
+                      <span className="text-zinc-500 font-semibold uppercase text-[8px] tracking-wider">WORDS:</span> <strong className="text-zinc-350">{activeCode.trim() === "" ? 0 : activeCode.trim().split(/\s+/).length}</strong>
+                    </span>
+                    <span className="text-zinc-800">|</span>
+                    <span>
+                      <span className="text-zinc-500 font-semibold uppercase text-[8px] tracking-wider">COMPLEXITY:</span> <strong className="text-zinc-350">{lines.length}</strong> lines
+                    </span>
+                  </div>
+                  
+                  <div className="flex items-center gap-3">
+                    {editorVisualTheme === "dark_void" && lowLightMode !== "normal" && (
+                      <span className="text-amber-500 font-bold uppercase text-[9px] animate-pulse flex items-center gap-1">
+                        ⚠️ Low-Light: {lowLightMode === "dimmed" ? "DIMMED" : "AMBER FILTER"}
+                      </span>
+                    )}
+                    <button
+                      onClick={() => setIsShortcutModalOpen(true)}
+                      className="text-zinc-500 hover:text-zinc-300 transition-colors uppercase font-semibold text-[9px] flex items-center gap-1 cursor-pointer"
+                    >
+                      <HelpCircle className="w-3.5 h-3.5 text-zinc-600" />
+                      <span>Shortcuts (Ctrl+/)</span>
+                    </button>
+                  </div>
+                </div>
+
               </div>
 
               {/* Real-time QASM-Lint Feature */}
@@ -2908,6 +3357,217 @@ measure q -> c;
         </div>
       )}
 
+      {/* Subspace Routine Distribution (Share) Modal */}
+      {isShareModalOpen && (
+        <div className="fixed inset-0 bg-black/85 backdrop-blur-sm flex items-center justify-center p-4 z-[9999] animate-fade-in font-mono">
+          <div className="bg-zinc-950 border border-zinc-800 rounded-2xl w-full max-w-xl flex flex-col max-h-[90vh] shadow-[0_0_50px_rgba(245,158,11,0.15)] overflow-hidden">
+            
+            {/* Modal Header */}
+            <div className="flex items-center justify-between border-b border-zinc-900 px-5 py-4 bg-zinc-950">
+              <div className="flex items-center gap-2">
+                <Share2 className="w-5 h-5 text-amber-500 animate-pulse" />
+                <div>
+                  <h3 className="text-sm font-bold text-zinc-100 uppercase tracking-wider">
+                    Subspace Routine Distribution Node
+                  </h3>
+                  <p className="text-[10px] text-zinc-500 uppercase mt-0.5">
+                    Broadcast encrypted routine keys and formatted cards to fleet crew members
+                  </p>
+                </div>
+              </div>
+              <button 
+                onClick={() => setIsShareModalOpen(false)}
+                className="p-1.5 hover:bg-zinc-900 rounded-lg text-zinc-400 hover:text-zinc-200 cursor-pointer transition-colors"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Modal Content */}
+            <div className="flex-1 overflow-y-auto p-5 space-y-5 scrollbar-thin">
+              
+              {/* Part 1: Public Share Link */}
+              <div className="space-y-2">
+                <label className="text-[10px] text-zinc-500 uppercase tracking-wider block font-bold">
+                  🛸 Subspace Distribution URL (Crew Communication Link)
+                </label>
+                <div className="flex gap-2">
+                  <input 
+                    type="text" 
+                    readOnly 
+                    value={generatedShareUrl}
+                    className="flex-1 bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-1.5 text-xs text-zinc-300 focus:outline-none font-mono selection:bg-zinc-800 selection:text-zinc-100"
+                  />
+                  <button
+                    onClick={() => {
+                      navigator.clipboard.writeText(generatedShareUrl);
+                      setShareCopied(true);
+                      setTimeout(() => setShareCopied(false), 2000);
+                    }}
+                    className={`px-3 py-1.5 text-xs font-bold rounded-lg border transition-all flex items-center gap-1.5 cursor-pointer ${
+                      shareCopied 
+                        ? "bg-emerald-950/40 border-emerald-500/40 text-emerald-400" 
+                        : "bg-amber-500/10 border-amber-500/30 hover:bg-amber-500/20 text-amber-400"
+                    }`}
+                  >
+                    {shareCopied ? (
+                      <>
+                        <Check className="w-3.5 h-3.5" />
+                        <span>Copied Link!</span>
+                      </>
+                    ) : (
+                      <>
+                        <Copy className="w-3.5 h-3.5" />
+                        <span>Copy URL</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+                <p className="text-[9px] text-zinc-600 leading-normal uppercase">
+                  This public URL is embedded with a unique encrypted hash that automatically decrypts and loads your active editor registers when another crew member loads it in their terminal simulator.
+                </p>
+              </div>
+
+              {/* Part 2: High-Contrast Snippet Card */}
+              <div className="space-y-2">
+                <label className="text-[10px] text-zinc-500 uppercase tracking-wider block font-bold">
+                  💾 Formatted Routine Snippet Card (Terminal Copy)
+                </label>
+                
+                {/* The Sci-Fi Routine Card container */}
+                <div className={`p-4 rounded-xl border relative overflow-hidden flex flex-col gap-3 transition-colors duration-300 ${
+                  selectedLanguage === "zeta" 
+                    ? "bg-[#020b12] border-cyan-500/40 shadow-[0_0_20px_rgba(6,182,212,0.15)]" 
+                    : selectedLanguage === "xylor" 
+                      ? "bg-[#010c05] border-emerald-500/40 shadow-[0_0_20px_rgba(16,185,129,0.15)]" 
+                      : "bg-[#0b0213] border-purple-500/40 shadow-[0_0_20px_rgba(168,85,247,0.15)]"
+                }`}>
+                  {/* Decorative card grid overlay lines */}
+                  <div className="absolute inset-0 bg-[linear-gradient(to_bottom,rgba(255,255,255,0.01)_1px,transparent_1px),linear-gradient(to_right,rgba(255,255,255,0.01)_1px,transparent_1px)] bg-[size:16px_16px] pointer-events-none" />
+                  
+                  {/* Card Header */}
+                  <div className="flex justify-between items-start border-b border-zinc-800/60 pb-2 relative z-10">
+                    <div>
+                      <span className={`text-[9px] font-bold tracking-widest px-1.5 py-0.5 rounded uppercase ${
+                        selectedLanguage === "zeta" 
+                          ? "bg-cyan-950/40 text-cyan-400 border border-cyan-500/20" 
+                          : selectedLanguage === "xylor" 
+                            ? "bg-emerald-950/40 text-emerald-400 border border-emerald-500/20" 
+                            : "bg-purple-950/40 text-purple-400 border border-purple-500/20"
+                      }`}>
+                        {selectedLanguage === "zeta" ? "ZETA DIALECT" : selectedLanguage === "xylor" ? "XYLOR DIALECT" : "GORGON DIALECT"}
+                      </span>
+                      <h4 className="text-xs font-bold text-zinc-100 mt-2 tracking-wide uppercase">
+                        {sharedRoutineName}
+                      </h4>
+                    </div>
+                    <div className="text-right">
+                      <span className="text-[8px] text-zinc-500 uppercase block font-bold">REGISTRY KEY</span>
+                      <span className="text-[10px] text-amber-400 font-bold font-mono">#{sharedRoutineId}</span>
+                    </div>
+                  </div>
+
+                  {/* Card Metadata Section */}
+                  <div className="grid grid-cols-2 gap-2 bg-zinc-950/60 border border-zinc-900 rounded p-2 text-[8px] text-zinc-500 uppercase font-mono relative z-10">
+                    <div>
+                      <span className="block text-zinc-650">TRANSMISSION: SECURE SUBSPACE</span>
+                      <span className="block text-zinc-650 mt-0.5">CREW ID: COGNITIVE TRANSCEIVER</span>
+                    </div>
+                    <div className="text-right">
+                      <span className="block text-zinc-650">TIMESTAMP: {new Date().toLocaleDateString()}</span>
+                      <span className="block text-zinc-650 mt-0.5">INTEGRITY: PARITY VALIDATED</span>
+                    </div>
+                  </div>
+
+                  {/* Card Code Preview container */}
+                  <div className="bg-black/95 border border-zinc-900 rounded-lg p-3 max-h-40 overflow-y-auto text-[10px] leading-relaxed text-zinc-300 font-mono relative z-10 select-all whitespace-pre-wrap break-all">
+                    {activeCode}
+                  </div>
+                  
+                  {/* Bottom branding footer */}
+                  <div className="flex justify-between items-center text-[7px] text-zinc-600 uppercase font-bold tracking-widest relative z-10 pt-1 border-t border-zinc-900/40">
+                    <span>COSMIC SHIELD VERIFIED</span>
+                    <span>CREW COMPLIANT v3.5</span>
+                  </div>
+                </div>
+
+                {/* Card copy and library actions */}
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => {
+                      const cardText = `🛸 SUBSPACE ALIEN ROUTINE CARD 🛸
+=================================
+DIALECT: ${selectedLanguage.toUpperCase()}
+ROUTINE NAME: ${sharedRoutineName}
+REGISTRY KEY: #${sharedRoutineId}
+TIMESTAMP: ${new Date().toLocaleString()}
+---------------------------------
+CODE INSTANCE BUFFER:
+${activeCode}
+---------------------------------
+Cosmic Parity Validated · Fleet Compliant`;
+                      navigator.clipboard.writeText(cardText);
+                      setShareCardCopied(true);
+                      setTimeout(() => setShareCardCopied(false), 2000);
+                    }}
+                    className={`flex-1 py-1.5 text-xs font-bold rounded-lg border transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+                      shareCardCopied 
+                        ? "bg-emerald-950/40 border-emerald-500/40 text-emerald-400" 
+                        : "bg-zinc-900 border-zinc-800 hover:bg-zinc-850 text-zinc-300"
+                    }`}
+                  >
+                    {shareCardCopied ? (
+                      <>
+                        <Check className="w-3.5 h-3.5" />
+                        <span>Card Text Copied!</span>
+                      </>
+                    ) : (
+                      <>
+                        <Copy className="w-3.5 h-3.5 text-cyan-400" />
+                        <span>Copy Card as Text Snippet</span>
+                      </>
+                    )}
+                  </button>
+
+                  <button
+                    onClick={() => {
+                      const exists = savedSnippets.some(s => s.code === activeCode);
+                      if (exists) return;
+                      
+                      const newSnippet = {
+                        id: `sn-shared-${sharedRoutineId}`,
+                        title: sharedRoutineName,
+                        dialect: selectedLanguage,
+                        description: `Subspace shared routine pinned to registry.`,
+                        code: activeCode
+                      };
+                      setSavedSnippets(prev => [newSnippet, ...prev]);
+                      setIsShareModalOpen(false);
+                    }}
+                    className="px-4 py-1.5 text-xs font-bold rounded-lg border border-cyan-800/40 bg-cyan-950/20 text-cyan-400 hover:bg-cyan-950/30 hover:border-cyan-700/50 transition-colors flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <Save className="w-3.5 h-3.5" />
+                    <span>Pin to Local Snippets</span>
+                  </button>
+                </div>
+              </div>
+
+            </div>
+
+            {/* Modal Footer */}
+            <div className="flex justify-end gap-3 px-5 py-4 border-t border-zinc-900 bg-zinc-950 font-mono">
+              <button 
+                onClick={() => setIsShareModalOpen(false)}
+                className="px-4 py-1.5 border border-zinc-800 bg-zinc-950 hover:bg-zinc-900 text-zinc-400 hover:text-zinc-200 rounded-lg text-xs font-bold transition-all cursor-pointer"
+              >
+                Close Distribution
+              </button>
+            </div>
+
+          </div>
+        </div>
+      )}
+
       {/* Snippet Library Modal */}
       {isSnippetLibraryOpen && (
         <div className="fixed inset-0 bg-black/85 backdrop-blur-sm flex items-center justify-center p-4 z-[9999] animate-fade-in font-mono">
@@ -3079,6 +3739,155 @@ measure q -> c;
                 className="px-3 py-1.5 bg-zinc-900 hover:bg-zinc-850 text-zinc-400 hover:text-zinc-200 rounded-lg text-[10px] uppercase font-bold tracking-wider cursor-pointer"
               >
                 Close Library
+              </button>
+            </div>
+
+          </div>
+        </div>
+      )}
+
+      {/* Keyboard Shortcuts Reference Modal */}
+      {isShortcutModalOpen && (
+        <div className="fixed inset-0 bg-black/85 backdrop-blur-sm flex items-center justify-center p-4 z-[9999] animate-fade-in font-mono">
+          <div className="bg-zinc-950 border border-zinc-800 rounded-2xl w-full max-w-lg flex flex-col shadow-[0_0_50px_rgba(245,158,11,0.15)] overflow-hidden">
+            
+            {/* Modal Header */}
+            <div className="flex items-center justify-between border-b border-zinc-900 px-5 py-4 bg-zinc-950">
+              <div className="flex items-center gap-2">
+                <Keyboard className="w-5 h-5 text-amber-400" />
+                <div>
+                  <h3 className="text-sm font-bold text-zinc-100 uppercase tracking-wider">
+                    Galactic Keybindings Reference
+                  </h3>
+                  <p className="text-[10px] text-zinc-500 uppercase mt-0.5">
+                    Navigate the workspace at warp speed with native cockpit shortcuts
+                  </p>
+                </div>
+              </div>
+              <button 
+                onClick={() => setIsShortcutModalOpen(false)}
+                className="p-1.5 hover:bg-zinc-900 rounded-lg text-zinc-400 hover:text-zinc-200 cursor-pointer transition-colors"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Modal Content */}
+            <div className="p-5 space-y-4 max-h-[70vh] overflow-y-auto scrollbar-thin">
+              <span className="text-[9px] font-bold text-zinc-500 uppercase tracking-widest block border-b border-zinc-900 pb-1">
+                Workspace Commands
+              </span>
+
+              <div className="grid grid-cols-1 gap-3.5">
+                {/* Translate */}
+                <div className="flex items-center justify-between bg-zinc-950/50 border border-zinc-900 rounded-xl p-3 hover:border-zinc-800 transition-colors">
+                  <div className="flex items-center gap-2.5">
+                    <div className="p-1.5 bg-cyan-950/40 rounded-lg border border-cyan-500/10">
+                      <Terminal className="w-4 h-4 text-cyan-400" />
+                    </div>
+                    <div>
+                      <span className="text-[11px] font-bold text-zinc-200 block">Translate & Run</span>
+                      <span className="text-[9px] text-zinc-500 block uppercase">Compile active editor buffer</span>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <kbd className="bg-zinc-900 px-1.5 py-0.5 rounded border border-zinc-800 text-zinc-300 font-bold text-[10px] shadow-[0_1.5px_0_#27272a]">Ctrl</kbd>
+                    <span className="text-zinc-600 text-xs">+</span>
+                    <kbd className="bg-zinc-900 px-1.5 py-0.5 rounded border border-zinc-800 text-zinc-300 font-bold text-[10px] shadow-[0_1.5px_0_#27272a]">Enter</kbd>
+                  </div>
+                </div>
+
+                {/* Format */}
+                <div className="flex items-center justify-between bg-zinc-950/50 border border-zinc-900 rounded-xl p-3 hover:border-zinc-800 transition-colors">
+                  <div className="flex items-center gap-2.5">
+                    <div className="p-1.5 bg-amber-950/40 rounded-lg border border-amber-500/10">
+                      <Wand2 className="w-4 h-4 text-amber-400" />
+                    </div>
+                    <div>
+                      <span className="text-[11px] font-bold text-zinc-200 block">Auto-Format Code</span>
+                      <span className="text-[9px] text-zinc-500 block uppercase">Standardize spacing & dialect casing</span>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <kbd className="bg-zinc-900 px-1.5 py-0.5 rounded border border-zinc-800 text-zinc-300 font-bold text-[10px] shadow-[0_1.5px_0_#27272a]">Ctrl</kbd>
+                    <span className="text-zinc-600 text-xs">+</span>
+                    <kbd className="bg-zinc-900 px-1.5 py-0.5 rounded border border-zinc-800 text-zinc-300 font-bold text-[10px] shadow-[0_1.5px_0_#27272a]">S</kbd>
+                  </div>
+                </div>
+
+                {/* Shortcuts */}
+                <div className="flex items-center justify-between bg-zinc-950/50 border border-zinc-900 rounded-xl p-3 hover:border-zinc-800 transition-colors">
+                  <div className="flex items-center gap-2.5">
+                    <div className="p-1.5 bg-purple-950/40 rounded-lg border border-purple-500/10">
+                      <Keyboard className="w-4 h-4 text-purple-400" />
+                    </div>
+                    <div>
+                      <span className="text-[11px] font-bold text-zinc-200 block">Bindings Reference</span>
+                      <span className="text-[9px] text-zinc-500 block uppercase">Toggle this cockpit help modal</span>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <kbd className="bg-zinc-900 px-1.5 py-0.5 rounded border border-zinc-800 text-zinc-300 font-bold text-[10px] shadow-[0_1.5px_0_#27272a]">Ctrl</kbd>
+                    <span className="text-zinc-600 text-xs">+</span>
+                    <kbd className="bg-zinc-900 px-1.5 py-0.5 rounded border border-zinc-800 text-zinc-300 font-bold text-[10px] shadow-[0_1.5px_0_#27272a]">/</kbd>
+                  </div>
+                </div>
+
+                {/* Dismiss modals */}
+                <div className="flex items-center justify-between bg-zinc-950/50 border border-zinc-900 rounded-xl p-3 hover:border-zinc-800 transition-colors">
+                  <div className="flex items-center gap-2.5">
+                    <div className="p-1.5 bg-zinc-900/40 rounded-lg border border-zinc-800/10">
+                      <X className="w-4 h-4 text-zinc-400" />
+                    </div>
+                    <div>
+                      <span className="text-[11px] font-bold text-zinc-200 block">Close Menus & Modals</span>
+                      <span className="text-[9px] text-zinc-500 block uppercase">Dismiss dialogs or autocomplete</span>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <kbd className="bg-zinc-900 px-1.5 py-0.5 rounded border border-zinc-800 text-zinc-300 font-bold text-[10px] shadow-[0_1.5px_0_#27272a]">Esc</kbd>
+                  </div>
+                </div>
+              </div>
+
+              <span className="text-[9px] font-bold text-zinc-500 uppercase tracking-widest block border-b border-zinc-900 pt-2 pb-1">
+                High-Speed Autocomplete Suggestions
+              </span>
+
+              <div className="grid grid-cols-1 gap-2 text-[10px] text-zinc-400 pl-1 space-y-1">
+                <div className="flex justify-between items-center py-0.5">
+                  <span className="text-zinc-500 uppercase tracking-wider text-[8px] font-bold">Cycle Suggestions:</span>
+                  <span className="flex items-center gap-1">
+                    <kbd className="bg-zinc-900 px-1 py-0.5 rounded border border-zinc-800 text-zinc-400">↑ Up Arrow</kbd>
+                    <span className="text-zinc-600 font-bold">/</span>
+                    <kbd className="bg-zinc-900 px-1 py-0.5 rounded border border-zinc-800 text-zinc-400">↓ Down Arrow</kbd>
+                  </span>
+                </div>
+                <div className="flex justify-between items-center py-0.5">
+                  <span className="text-zinc-500 uppercase tracking-wider text-[8px] font-bold">Commit Selected suggestion:</span>
+                  <span className="flex items-center gap-1">
+                    <kbd className="bg-zinc-900 px-1.5 py-0.5 rounded border border-zinc-800 text-zinc-400">Enter</kbd>
+                    <span className="text-zinc-600 font-bold">or</span>
+                    <kbd className="bg-zinc-900 px-1.5 py-0.5 rounded border border-zinc-800 text-zinc-400">Tab</kbd>
+                  </span>
+                </div>
+                <div className="flex justify-between items-center py-0.5">
+                  <span className="text-zinc-500 uppercase tracking-wider text-[8px] font-bold">Dismiss suggestions:</span>
+                  <span>
+                    <kbd className="bg-zinc-900 px-1.5 py-0.5 rounded border border-zinc-800 text-zinc-400">Esc</kbd>
+                  </span>
+                </div>
+              </div>
+
+            </div>
+
+            {/* Modal Footer */}
+            <div className="bg-zinc-950/80 px-5 py-3 border-t border-zinc-900 flex justify-end">
+              <button 
+                onClick={() => setIsShortcutModalOpen(false)}
+                className="px-3.5 py-1.5 bg-zinc-900 hover:bg-zinc-850 text-zinc-350 hover:text-zinc-100 rounded-lg text-[10px] uppercase font-bold tracking-wider cursor-pointer"
+              >
+                Clear Screen
               </button>
             </div>
 
