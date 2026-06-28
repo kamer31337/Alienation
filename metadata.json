@@ -1,0 +1,6 @@
+{
+  "name": "Alien Programming Simulator",
+  "description": "An immersive sci-fi terminal and IDE to write, translate, and simulate code in multi-dimensional alien languages, assisted by an AI alien compiler companion.",
+  "requestFramePermissions": ["microphone"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
