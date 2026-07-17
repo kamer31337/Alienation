@@ -49,7 +49,26 @@ export default function TerminalSimulation({
   const [tickerMetrics, setTickerMetrics] = useState<Array<{ key: string; value: string }>>([]);
   const [activeTab, setActiveTab] = useState<"logs" | "perf">("logs");
   const [hardwareTheme, setHardwareTheme] = useState<"crt" | "plasma" | "void">("crt");
+  const [elapsedTime, setElapsedTime] = useState<number>(0);
   const logEndRef = useRef<HTMLDivElement>(null);
+  const startTimeRef = useRef<number | null>(null);
+
+  // Stopwatch effect
+  useEffect(() => {
+    let interval: NodeJS.Timeout;
+    if (isSimulating) {
+      startTimeRef.current = Date.now();
+      setElapsedTime(0);
+      interval = setInterval(() => {
+        if (startTimeRef.current) {
+          setElapsedTime(Date.now() - startTimeRef.current);
+        }
+      }, 100);
+    } else {
+      clearInterval(interval);
+    }
+    return () => clearInterval(interval);
+  }, [isSimulating]);
 
   useEffect(() => {
     logEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -224,15 +243,34 @@ export default function TerminalSimulation({
             <h3 className="font-mono text-xs font-semibold text-zinc-100 tracking-wider uppercase">
               Simulation Monitor Panel
             </h3>
+            {/* Stopwatch */}
+            <span className="ml-2 font-mono text-[10px] text-zinc-500 bg-zinc-950 px-1.5 py-0.5 rounded border border-zinc-800">
+              {(elapsedTime / 1000).toFixed(1)}s
+            </span>
           </div>
           
-          <button
-            onClick={onSimulate}
-            disabled={isSimulating}
-            className={`flex items-center gap-1.5 font-mono text-[10px] px-3 py-1.5 rounded-lg border bg-zinc-950 hover:bg-zinc-900 text-zinc-100 transition-all cursor-pointer disabled:opacity-40 disabled:pointer-events-none`}
-            style={{ borderColor: getLanguageHex() + "30" }}
-            id="compile-btn"
-          >
+          <div className="flex items-center gap-2">
+            {/* Clear Button */}
+            <button
+              onClick={() => {
+                setActiveSteps([]);
+                setCurrentStepIdx(0);
+                setShowFinalOutput(false);
+                setTickerMetrics([]);
+                setElapsedTime(0);
+              }}
+              className="text-zinc-500 hover:text-red-400 transition-colors p-1.5 rounded-lg border border-zinc-800 bg-zinc-950"
+              title="Clear Terminal Logs"
+            >
+              <RefreshCw className="w-3.5 h-3.5" />
+            </button>
+            <button
+              onClick={onSimulate}
+              disabled={isSimulating}
+              className={`flex items-center gap-1.5 font-mono text-[10px] px-3 py-1.5 rounded-lg border bg-zinc-950 hover:bg-zinc-900 text-zinc-100 transition-all cursor-pointer disabled:opacity-40 disabled:pointer-events-none`}
+              style={{ borderColor: getLanguageHex() + "30" }}
+              id="compile-btn"
+            >
             {isSimulating ? (
               <>
                 <RefreshCw className="w-3.5 h-3.5 animate-spin" />
@@ -245,6 +283,7 @@ export default function TerminalSimulation({
               </>
             )}
           </button>
+        </div>
         </div>
 
         {/* Dynamic Controls: Theme Swapper + View Tabs */}
@@ -484,5 +523,6 @@ export default function TerminalSimulation({
         )}
       </div>
     </div>
+
   );
 }

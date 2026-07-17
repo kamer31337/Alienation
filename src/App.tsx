@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from "react";
+import { initAudio, playTypeSound, playCompileSound, playTranslateSound } from "./lib/audio";
 import { Language, AlienProject, TranslationResult, SimulationResult, Puzzle } from "./types";
 import { LANGUAGES, PUZZLES, TEMPLATES, LanguageInfo } from "./data";
 import LanguageSelector from "./components/LanguageSelector";
@@ -607,6 +608,7 @@ export default function App() {
   });
   const [isShareModalOpen, setIsShareModalOpen] = useState<boolean>(false);
   const [isShortcutModalOpen, setIsShortcutModalOpen] = useState<boolean>(false);
+  const [isSoundEnabled, setIsSoundEnabled] = useState<boolean>(true);
   const [lowLightMode, setLowLightMode] = useState<"normal" | "dimmed" | "amber">(() => {
     return (localStorage.getItem("editor_low_light_mode") as "normal" | "dimmed" | "amber") || "normal";
   });
@@ -906,6 +908,7 @@ export default function App() {
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (isSoundEnabled) playTypeSound();
     if (showAutocomplete && autocompleteSuggestions.length > 0) {
       if (e.key === "ArrowDown") {
         e.preventDefault();
@@ -1213,6 +1216,7 @@ measure q -> c;
   };
 
   const handleFormatCode = () => {
+    if (isSoundEnabled) playCompileSound();
     const formatted = formatAlienCode(activeCode, selectedLanguage);
     setActiveCode(formatted);
   };
@@ -1476,6 +1480,7 @@ measure q -> c;
   };
 
   const handleTranslate = async () => {
+    if (isSoundEnabled) playTranslateSound();
     if (!activeCode.trim()) return;
     setIsTranslating(true);
     setApiError(null);
@@ -2174,6 +2179,29 @@ measure q -> c;
 
                   {/* Right: Font Zoom, Code Formatter, and Copy tools */}
                   <div className="flex items-center flex-wrap gap-2">
+                    {/* Import Template Dropdown */}
+                    <div className="relative group">
+                      <button
+                        className="px-2.5 py-1 font-mono text-[10px] font-bold rounded-lg border border-zinc-800 bg-zinc-950 hover:bg-zinc-900 text-zinc-300 hover:text-zinc-100 transition-all flex items-center gap-1.5 cursor-pointer"
+                        title="Insert Template"
+                      >
+                        <FileCode2 className="w-3.5 h-3.5 text-cyan-400" />
+                        <span>Templates</span>
+                      </button>
+                      <div className="absolute right-0 top-full mt-1.5 w-60 bg-zinc-950 border border-zinc-800 rounded-lg shadow-2xl p-2 hidden group-hover:block z-50 animate-fade-in">
+                        {TEMPLATES[selectedLanguage].map((tmpl) => (
+                          <button
+                            key={tmpl.name}
+                            onClick={() => setActiveCode(activeCode + "\n" + tmpl.code)}
+                            className="w-full text-left p-2 rounded hover:bg-zinc-900 font-mono text-[10px] text-zinc-300 hover:text-white transition-colors cursor-pointer"
+                          >
+                            <span className="font-bold block text-zinc-100">{tmpl.name}</span>
+                            <span className="text-[9px] text-zinc-500 block">{tmpl.description}</span>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
                     {/* Snippet Library Trigger */}
                     <button
                       onClick={() => setIsSnippetLibraryOpen(true)}
@@ -2184,19 +2212,36 @@ measure q -> c;
                       <span>Snippets</span>
                     </button>
 
-                    {/* Alien Theme Toggle */}
-                    <button
-                      onClick={() => setIsAlienThemeActive(prev => !prev)}
-                      className={`px-2.5 py-1 font-mono text-[10px] font-bold rounded-lg border transition-all flex items-center gap-1.5 cursor-pointer ${
-                        isAlienThemeActive
-                          ? "border-amber-500/30 bg-amber-500/10 text-amber-400 font-semibold shadow-[0_0_8px_rgba(245,158,11,0.1)]"
-                          : "border-zinc-800 bg-zinc-950 hover:bg-zinc-900 text-zinc-300 hover:text-zinc-100"
-                      }`}
-                      title="Toggle Alien Language Immersive UI Accent colors"
-                    >
-                      <Sparkles className="w-3 h-3 text-amber-400" />
-                      <span>Alien Theme</span>
-                    </button>
+                      {/* Alien Theme Toggle */}
+                      <button
+                        onClick={() => setIsAlienThemeActive(prev => !prev)}
+                        className={`px-2.5 py-1 font-mono text-[10px] font-bold rounded-lg border transition-all flex items-center gap-1.5 cursor-pointer ${
+                          isAlienThemeActive
+                            ? "border-amber-500/30 bg-amber-500/10 text-amber-400 font-semibold shadow-[0_0_8px_rgba(245,158,11,0.1)]"
+                            : "border-zinc-800 bg-zinc-950 hover:bg-zinc-900 text-zinc-300 hover:text-zinc-100"
+                        }`}
+                        title="Toggle Alien Language Immersive UI Accent colors"
+                      >
+                        <Sparkles className="w-3 h-3 text-amber-400" />
+                        <span>Alien Theme</span>
+                      </button>
+
+                      {/* Sound Toggle */}
+                      <button
+                        onClick={() => {
+                          if (!isSoundEnabled) initAudio();
+                          setIsSoundEnabled(prev => !prev);
+                        }}
+                        className={`px-2.5 py-1 font-mono text-[10px] font-bold rounded-lg border transition-all flex items-center gap-1.5 cursor-pointer ${
+                          isSoundEnabled
+                            ? "border-zinc-800 bg-zinc-950 text-zinc-300"
+                            : "border-red-900 bg-red-950/20 text-red-400"
+                        }`}
+                        title="Toggle sound effects"
+                      >
+                        {isSoundEnabled ? <Mic className="w-3 h-3" /> : <MicOff className="w-3 h-3" />}
+                        <span>{isSoundEnabled ? "Sound ON" : "Sound OFF"}</span>
+                      </button>
 
                     {/* Editor Visual Theme Toggle */}
                     <div className="flex items-center gap-1.5 flex-wrap">
@@ -2675,31 +2720,26 @@ measure q -> c;
                   ref={minimapContainerRef}
                 >
                   {/* Miniature representations of text lines */}
-                  <div className="flex-1 flex flex-col gap-[2px] opacity-40 px-1 pointer-events-none">
-                    {lines.slice(0, 80).map((lineText, idx) => {
+                  <div className="flex-1 flex flex-col gap-[1px] opacity-60 px-1 pointer-events-none">
+                    {lines.slice(0, 100).map((lineText, idx) => {
+                      let colorClass = "text-zinc-700";
                       const trimmed = lineText.trim();
-                      let widthClass = "w-4";
-                      if (trimmed.length > 30) widthClass = "w-12";
-                      else if (trimmed.length > 20) widthClass = "w-10";
-                      else if (trimmed.length > 10) widthClass = "w-8";
-                      else if (trimmed.length > 5) widthClass = "w-6";
-                      else if (trimmed.length === 0) widthClass = "w-0";
-
-                      let colorClass = "bg-zinc-700";
-                      if (trimmed.startsWith("//")) colorClass = "bg-zinc-800";
+                      if (trimmed.startsWith("//")) colorClass = "text-zinc-800";
                       else if (trimmed.includes("TESS_LOOP") || trimmed.includes("SPORE_BLOOM") || trimmed.includes("TEMPORAL_WORMHOLE")) {
-                        colorClass = selectedLanguage === "zeta" ? "bg-cyan-500" : selectedLanguage === "xylor" ? "bg-emerald-500" : "bg-purple-500";
+                        colorClass = selectedLanguage === "zeta" ? "text-cyan-500" : selectedLanguage === "xylor" ? "text-emerald-500" : "text-purple-500";
                       } else if (trimmed.includes("function") || trimmed.includes("const") || trimmed.includes("let")) {
-                        colorClass = "bg-amber-500";
+                        colorClass = "text-amber-500";
                       } else if (trimmed.includes("PSI_PROJECTION") || trimmed.includes("ENZYME_SECRETION") || trimmed.includes("CHRONICLE_ECHO")) {
-                        colorClass = "bg-blue-400";
+                        colorClass = "text-blue-400";
                       }
 
                       return (
                         <div 
                           key={idx} 
-                          className={`h-[2px] rounded-sm transition-all ${widthClass} ${colorClass}`} 
-                        />
+                          className={`font-mono text-[4px] leading-[3px] truncate ${colorClass}`} 
+                        >
+                          {lineText.substring(0, 20)}
+                        </div>
                       );
                     })}
                   </div>
