@@ -17,7 +17,7 @@
 //     'User-Agent': 'aistudio-build',
 //  }
 //  }
-});
+// });
 
 /**
  * Executes a Gemini API call with exponential backoff and dynamic model failover on transient errors (e.g., 503, 429).
