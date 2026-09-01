@@ -1,22 +1,22 @@
-import express from "express";
-import path from "path";
-import { createServer as createViteServer } from "vite";
-import { GoogleGenAI, Type } from "@google/genai";
-import dotenv from "dotenv";
+// import express from "express";
+// import path from "path";
+// import { createServer as createViteServer } from "vite";
+// import { GoogleGenAI, Type } from "@google/genai";
+// import dotenv from "dotenv";
 
-dotenv.config();
+// dotenv.config();
 
 // Ensure Gemini API key is available
 const apiKey = process.env.GEMINI_API_KEY;
 
-// Initialize Gemini SDK with User-Agent for AI Studio telemetry
-const ai = new GoogleGenAI({
-  apiKey: apiKey || "",
-  httpOptions: {
-    headers: {
-      'User-Agent': 'aistudio-build',
-    }
-  }
+// Initialize Gemini SDK with User-Agent for AI Studio //telemetry
+// const ai = new GoogleGenAI({
+//  apiKey: apiKey || "",
+//  httpOptions: {
+//    headers: {
+//     'User-Agent': 'aistudio-build',
+//  }
+//  }
 });
 
 /**
