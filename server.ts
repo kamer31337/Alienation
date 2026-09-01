@@ -7,7 +7,7 @@
 // dotenv.config();
 
 // Ensure Gemini API key is available
-const apiKey = process.env.GEMINI_API_KEY;
+// const apiKey = process.env.GEMINI_API_KEY;
 
 // Initialize Gemini SDK with User-Agent for AI Studio //telemetry
 // const ai = new GoogleGenAI({
