@@ -22,12 +22,12 @@
 /**
  * Executes a Gemini API call with exponential backoff and dynamic model failover on transient errors (e.g., 503, 429).
  */
-async function callGeminiWithRetry<T>(
-  apiCall: (modelName: string) => Promise<T>,
-  retries = 5,
-  delayMs = 1500
-): Promise<T> {
-  const modelsToTry = ["gemini-1.5-flash", "gemini-1.5-pro"];
+// async function callGeminiWithRetry<T>(
+//  apiCall: (modelName: string) => Promise<T>,
+//  retries = 5,
+//  delayMs = 1500
+// ): Promise<T> {
+//  const modelsToTry = ["gemini-1.5-flash", "gemini-1.5-pro"];
   for (let attempt = 1; attempt <= retries; attempt++) {
     // Dynamic failover: Try primary gemini-1.5-flash first (attempts 1 & 2),
     // then fall back to gemini-1.5-pro (attempts 3+) if experiencing transient loads.
