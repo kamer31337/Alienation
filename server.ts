@@ -769,5 +769,6 @@ measure q -> c;`;
     console.log(`Alien Programming Simulator running at http://localhost:${PORT}`);
   });
 }
-
-startServer();
+//-----------------//
+// startServer(); //
+//---------------//
