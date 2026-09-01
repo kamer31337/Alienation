@@ -73,9 +73,7 @@
   throw new Error("Maximum retry attempts reached.");
 }
 
-/**
- * Local Translation Backup Engine (Heuristic-based)
- */
+/*
 function getLocalFallbackTranslation(code: string, targetLanguage: string) {
   const lines = code.split("\n").map(line => line.trim()).filter(Boolean);
   let alienLines: string[] = [];
@@ -148,11 +146,7 @@ function getLocalFallbackTranslation(code: string, targetLanguage: string) {
     warnings: ["Running on secondary localized spacecraft navigation cells. No hazard risk detected."],
     isFallback: true
   };
-}
-
-/**
- * Local Compilation & Simulation Backup Engine
- */
+}*/
 function getLocalFallbackSimulation(code: string, alienLanguage: string) {
   const isZeta = alienLanguage.toLowerCase().includes("zeta") || alienLanguage === "zeta";
   const isXylor = alienLanguage.toLowerCase().includes("xylor") || alienLanguage === "xylor";
